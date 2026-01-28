@@ -1,0 +1,248 @@
+//programa para el envio de datos de temperatura y humedad hacia el servidor websocket
+#include <WiFi.h>
+#include <WebSocketsClient.h>
+#include <ArduinoJson.h>
+#include <DHT.h>
+//definiendo los pines para el sensor de temp y hum
+#define DHTTYPE DHT22
+#define DHTPIN 4
+
+DHT dht(DHTPIN, DHTTYPE, 22);
+int led = 12;
+int led2 = 14;
+int led3 = 27;
+//estados de los pines
+bool estado_led = 0;
+bool estado_led2 = 0;
+bool estado_led3 = 0;
+
+//configurando la conexion a wifi
+//const char* ssid = "kevito_sam";
+//const char* password = "12345kev";
+const char* ssid = "vw-03826";
+const char* password = "ZTERRTHJ8902852";
+
+//configuracion para la direccion del servidor websocket
+//const char* ws_host = "10.245.59.12";
+const char* ws_host = "192.168.1.224";
+const int ws_port = 8080;
+
+//creando al objeto websocket que guarda la conexion entre el servidor WebSocket
+WebSocketsClient webSocket;
+
+//identificador unico para este dispostivo esp32
+const String DEVICE_ID = "esp_amb1";
+
+
+//funcion para la gestion de eventos del websocket
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length);
+void envioDatosTH();
+void envioFeedbackVent(int nuevoEstado); 
+void envioFeedbackCalent(int nuevoEstado); 
+void envioFeedbackHumi(int nuevoEstado); 
+void incrementarVel();
+void decrementarVel();
+
+bool conexion_server = false;
+
+//dato para guardar los segundos
+unsigned long con_millis = 0;
+unsigned long feed_millis = 0;
+
+void setup() {
+	Serial.begin(115200);
+	dht.begin();
+
+	//el modo de los pines
+	pinMode(led, OUTPUT);
+	digitalWrite(led, estado_led);
+	pinMode(led2, OUTPUT);
+	digitalWrite(led2, estado_led2);
+	pinMode(led3, OUTPUT);
+	digitalWrite(led3, estado_led3);
+
+	//conectando a wifi
+	WiFi.begin(ssid, password);
+	while (WiFi.status() != WL_CONNECTED){
+		delay(500);
+		Serial.print(".");
+	}
+	Serial.println("\nSe ha conectado a la red WiFi");
+
+	//configurando el websocket cliente
+	webSocket.begin(ws_host, ws_port, "/");
+	webSocket.onEvent(webSocketEvent); //llamando a la funcion
+	webSocket.setReconnectInterval(5000);
+}
+
+
+void loop() {
+	webSocket.loop();
+	if (conexion_server == true){
+		if (millis() - con_millis > 5000){
+			envioDatosTH();
+			con_millis = millis();
+		}
+	}
+	if (conexion_server == true){
+		if(millis() - feed_millis > 500){
+			envioFeedbackVent(estado_led);
+			envioFeedbackCalent(estado_led2);
+			envioFeedbackHumi(estado_led3);
+			feed_millis = millis();
+		}
+	}
+}
+
+//funcion para la gestion de eventos del websocket
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length){
+	switch(type){
+		case WStype_DISCONNECTED:
+			Serial.println("[WS] Desconectado del servidor");
+			conexion_server = false;
+			break;
+
+		case WStype_CONNECTED:
+			Serial.println("[WS] Conectado con el servidor");
+			Serial.println("\tEnviando llave de autenticacion...");
+			//aqui la funcion que envia la llave
+			envioAutenticacion();
+			conexion_server = true;
+			break;
+
+		case WStype_TEXT:
+			Serial.printf("[WS] Mensaje recibido: %s\n", payload);
+
+			//convirtiendo en json
+			JsonDocument mensaje_rec;
+			DeserializationError error = deserializeJson(mensaje_rec, payload);
+			
+			if (error){
+				Serial.print("Error al parsear JSON: ");
+				Serial.println(error.c_str());
+				return;
+			}
+			
+			bool valor = 0;
+			//verificando lo que nos interesa en el JSON
+			if (mensaje_rec["tipo"] == "ordenVent"){
+				valor = (bool) mensaje_rec["valor"];
+				//Serial.print("Este es el valor: ");
+				//Serial.println(valor);
+				digitalWrite(led, valor);
+				envioFeedbackVent(valor);
+				estado_led = valor;
+			}
+			else if (mensaje_rec["tipo"] == "ordenCalent"){
+				valor = (bool) mensaje_rec["valor"];
+				//Serial.print("Este es el valor: ");
+				//Serial.println(valor);
+				digitalWrite(led2, valor);
+				envioFeedbackCalent(valor);
+				estado_led2 = valor;
+			}
+			else if (mensaje_rec["tipo"] == "ordenHumi"){
+				valor = (bool) mensaje_rec["valor"];
+				//Serial.print("Este es el valor: ");
+				//Serial.println(valor);
+				digitalWrite(led3, valor);
+				envioFeedbackHumi(valor);
+				estado_led3 = valor;
+			}
+			break;
+
+	}
+}
+
+//funcion de autenticacion
+void envioAutenticacion(){
+	JsonDocument auth;
+	auth["action"] = "autenticacion";
+	auth["id_disp"] = DEVICE_ID;
+
+	String mensaje;
+	serializeJson(auth, mensaje);
+	webSocket.sendTXT(mensaje);
+}
+
+void envioFeedbackVent(int nuevoEstado){
+	JsonDocument feedback;
+	feedback["action"] = "feedbackVent";
+	feedback["id_disp"] = DEVICE_ID;
+	feedback["estado_ahora"] = nuevoEstado;	
+
+	String mensaje;
+	serializeJson(feedback, mensaje);
+	webSocket.sendTXT(mensaje);
+}
+
+void envioFeedbackCalent(int nuevoEstado){
+	JsonDocument feedback;
+	feedback["action"] = "feedbackCalent";
+	feedback["id_disp"] = DEVICE_ID;
+	feedback["estado_ahora"] = nuevoEstado;	
+
+	String mensaje;
+	serializeJson(feedback, mensaje);
+	webSocket.sendTXT(mensaje);
+}
+
+void envioFeedbackHumi(int nuevoEstado){
+	JsonDocument feedback;
+	feedback["action"] = "feedbackHumi";
+	feedback["id_disp"] = DEVICE_ID;
+	feedback["estado_ahora"] = nuevoEstado;	
+
+	String mensaje;
+	serializeJson(feedback, mensaje);
+	webSocket.sendTXT(mensaje);
+}
+
+void envioDatosTH(){
+	float temp = dht.readTemperature();
+	float hum = dht.readHumidity();
+
+	//imprimir datos de temp y hum en la terminal arduino 
+	Serial.println("\nSe envian los datos de temp y hum:");
+	Serial.print("\tTemperatura: ");
+	Serial.println(temp);
+	Serial.print("\tHumedad: ");
+	Serial.println(hum);
+	
+	JsonDocument datos;
+	datos["action"] = "datos_TH";
+	datos["id_disp"] = DEVICE_ID;
+	datos["temp"] = temp;
+	datos["hum"] = hum;
+
+	String datos_out;
+	serializeJson(datos, datos_out);
+	webSocket.sendTXT(datos_out);
+	Serial.println("Datos TH enviados exitosamente");
+
+}
+
+//funcion para incrementar pwm para el ventilador
+void incrementarVel(){
+	for(int dutyCycle = 0; dutyCycle <= 255; dutyCycle++){   
+		// changing the LED brightness with PWM
+		analogWrite(led, dutyCycle);
+		delay(20);
+	}
+}
+
+//funcion para decrementar la velocidad del ventilador
+void decrementarVel(){
+	for(int dutyCycle = 255; dutyCycle >= 0; dutyCycle--){
+		// changing the LED brightness with PWM
+		analogWrite(led, dutyCycle);
+		delay(20);
+	}
+}
+
+
+
+
+
+
+
