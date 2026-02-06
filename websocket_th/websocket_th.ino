@@ -43,20 +43,20 @@ bool estado_humi = 0;
 //configurando la conexion a wifi
 //const char* ssid = "kevito_sam";
 //const char* password = "12345kev";
-//const char* ssid = "vw-03826";
-//const char* password = "ZTERRTHJ8902852";
+const char* ssid = "vw-03826";
+const char* password = "ZTERRTHJ8902852";
 //const char* ssid = "BARATRONICS";
 //const char* password = "inicio2021";
 //const char* ssid = "DaniJenny";
 //const char* password = "DaxJe022";
 //const char* ssid = "FLIA_CRUZ_2.4G";
 //const char* password = "14378556";
-const char* ssid = "IEM-MONITOREO";
-const char* password = "iem-umsa-2026";
+//const char* ssid = "IEM-MONITOREO";
+//const char* password = "iem-umsa-2026";
 
 //configuracion para la direccion del servidor websocket
 //const char* ws_host = "10.245.59.12";
-const char* ws_host = "192.168.10.1";
+const char* ws_host = "192.168.1.229";
 const int ws_port = 8080;
 
 //creando al objeto websocket que guarda la conexion entre el servidor WebSocket
@@ -65,9 +65,19 @@ bool conexion_server = false;
 
 bool ejecutarIncremento = false;
 bool ejecutarDecremento = false;
+bool estado_temp = false;
+bool estado_hum = false;
+bool automatico = false;
 
 //identificador unico para este dispostivo esp32
 const String DEVICE_ID = "esp_amb1";
+
+float temp = 0.0f; //lecutura de temperatura del sensor
+float hum = 0.0f; //lectura de humedad del sensor
+float temp_rec = 0.0f; //set point de temperatura en modo automatico
+float hum_rec = 0.0f; //set point de humedad en modo automatico
+float tol_temp = 1.5f; //tolerancia de temp para el modo automatico
+float tol_hum = 2.0f; //tolerancia de temp para el modo automatico
 
 
 //prototipo de funciones generales
@@ -80,9 +90,12 @@ void envioFeedbackCalent(int nuevoEstado);
 void envioFeedbackHumi(int nuevoEstado); 
 void incrementarVel();
 void decrementarVel();
-
+void controlAuto(bool estado_temp, bool estado_hum);
 
 //******************************************************
+//DECLARACION DE LOS HANDLES
+TaskHandle_t automaticoTempHumHandle = NULL;
+
 //A PARTIR DE AQUI LAS TAREAS DE FREERTOS
 //tarea 1: mantener la conexion con el servidor websocket
 void tareaWebSocket(void *parameter){
@@ -133,6 +146,20 @@ void tareaVelocidadPWM(void *parameter){
 		vTaskDelay(50 / portTICK_PERIOD_MS);
 	}
 }
+
+//tarea 5: verificar valores de temperatura y humedad
+void tareaAutoTempHum(void *parameter){
+	for(;;){
+		//guardando los estados de las condiciones
+		estado_temp = (temp >= (temp_rec + tol_temp)) ? true : false;
+		estado_hum = (hum >= (hum_rec + tol_hum)) ? true : false;
+
+		controlAuto(estado_temp, estado_hum);
+		
+		vTaskDelay(100 / portTICK_PERIOD_MS);
+	}
+}
+
 
 //void tareaPilotoServer(void *parameter){
 //	for(;;){
@@ -221,6 +248,17 @@ void setup() {
 		1
 	);
 
+	//tarea 5: verificar valores de temperatura y humedad
+	xTaskCreatePinnedToCore(
+		tareaAutoTempHum,
+		"AutoTempHumTask",
+		4096,
+		NULL,
+		2,
+		&automaticoTempHumHandle,
+		0
+	);
+
 //	xTaskCreatePinnedToCore(
 //		tareaPilotoServer,
 //		"PilotoServerTask",
@@ -230,6 +268,8 @@ void setup() {
 //		NULL,
 //		0 //nucleo del procesador
 //	);
+
+	vTaskSuspend(automaticoTempHumHandle);
 
 	Serial.println("Se han creado las tareas para FreeRTOS");
 
@@ -285,6 +325,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length){
 			Serial.println("[WS] Desconectado del servidor");
 			conexion_server = false;
 			digitalWrite(piloto_server, LOW);
+			detener();
 			break;
 
 		case WStype_CONNECTED:
@@ -311,7 +352,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length){
 			
 			int valor = 0;
 			//verificando lo que nos interesa en el JSON
-			if (mensaje_rec["tipo"] == "ordenVent"){
+			if (mensaje_rec["tipo"] == "ordenVent" && automatico == false){
 				valor = (bool) mensaje_rec["valor"];
 				//Serial.print("Este es el valor: ");
 				//Serial.println(valor);
@@ -323,12 +364,13 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length){
 				}
 				else if (valor == 0){
 					estado_vent = valor;
+					decrementarVel();
 					ejecutarIncremento = false;
 					ejecutarDecremento = true;
 				}
 				envioFeedbackVent(estado_vent);
 			}
-			else if (mensaje_rec["tipo"] == "ordenCalent"){
+			else if (mensaje_rec["tipo"] == "ordenCalent" && automatico == false){
 				valor = (bool) mensaje_rec["valor"];
 				//Serial.print("Este es el valor: ");
 				//Serial.println(valor);
@@ -336,7 +378,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length){
 				envioFeedbackCalent(valor);
 				estado_calent = valor;
 			}
-			else if (mensaje_rec["tipo"] == "ordenHumi"){
+			else if (mensaje_rec["tipo"] == "ordenHumi" && automatico == false){
 				valor = (bool) mensaje_rec["valor"];
 				//Serial.print("Este es el valor: ");
 				//Serial.println(valor);
@@ -344,11 +386,23 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length){
 				envioFeedbackHumi(valor);
 				estado_humi = valor;
 			}
-			else if (mensaje_rec["tipo"] == "ordenVent_Var"){
+			else if (mensaje_rec["tipo"] == "ordenVent_Var" && automatico == false){
 				valor = (int) mensaje_rec["valor"];
 				if (estado_vent == 1){
 					analogWrite(vent, valor);
 				}
+			}
+			else if (mensaje_rec["tipo"] == "automatico" && automatico == false){
+				temp_rec = (float) mensaje_rec["temp"];
+				hum_rec = (float) mensaje_rec["hum"];
+				automatico = true;
+				activarAuto();
+				vTaskResume(automaticoTempHumHandle);
+			}
+			else if (mensaje_rec["tipo"] == "detener_todo"){
+				vTaskSuspend(automaticoTempHumHandle);
+				automatico = false;
+				detener();
 			}
 			break;
 		
@@ -400,8 +454,8 @@ void envioFeedbackHumi(int nuevoEstado){
 }
 
 void envioDatosTH(){
-	float temp = dht.readTemperature();
-	float hum = dht.readHumidity();
+	temp = dht.readTemperature();
+	hum = dht.readHumidity();
 
 	//imprimir datos de temp y hum en la terminal arduino 
 	Serial.println("\nSe envian los datos de temp y hum:");
@@ -436,12 +490,84 @@ void incrementarVel(){
 
 //funcion para decrementar la velocidad del ventilador
 void decrementarVel(){
-	for(int dutyCycle = 150; dutyCycle >= 0; dutyCycle--){
-		// changing the LED brightness with PWM
-		analogWrite(vent, dutyCycle);
-		vTaskDelay(10 / portTICK_PERIOD_MS);
+	if (estado_vent == 1){
+		for(int dutyCycle = 150; dutyCycle >= 0; dutyCycle--){
+			// changing the LED brightness with PWM
+			analogWrite(vent, dutyCycle);
+			vTaskDelay(10 / portTICK_PERIOD_MS);
+		}
+		vTaskDelay(50 / portTICK_PERIOD_MS);
+		digitalWrite(vent_relay, LOW);
+		estado_vent == 0;
 	}
-	vTaskDelay(50 / portTICK_PERIOD_MS);
-	digitalWrite(vent_relay, LOW);
+}
+
+//funcion detener todo 
+void detener(){
+	estado_calent = 0;
+	digitalWrite(calent, estado_calent);
+	estado_humi = 0;
+	digitalWrite(humi, estado_humi); 
+	ejecutarIncremento = false;
+	ejecutarDecremento = true;
+	estado_vent = 0;
+}
+
+//funcion para activar el modo automatico
+void activarAuto(){
+	estado_calent = 1;
+	//activar los componentes
+	digitalWrite(calent, estado_calent);
+	envioFeedbackCalent(estado_calent);
+
+	vTaskDelay(10000 / portTICK_PERIOD_MS);
+	estado_vent = 1;
+	ejecutarIncremento = true;
+	ejecutarDecremento = false;
+	envioFeedbackVent(estado_vent);
+
+	estado_humi = 1;
+	digitalWrite(humi, estado_humi);
+	envioFeedbackHumi(estado_humi);
+}
+
+//funcion para el control automatico
+void controlAuto(bool estado_temp, bool estado_hum){
+	if (automatico == true){
+		if (estado_temp == false && estado_hum == false){
+			digitalWrite(calent, estado_calent);
+			digitalWrite(humi, estado_humi);
+			analogWrite(vent, 170);
+			estado_vent = true;
+			estado_calent = true;
+			estado_humi = true;
+		}
+		if (estado_temp == false && estado_hum == true){
+			digitalWrite(calent, estado_calent);
+			digitalWrite(humi, estado_humi);
+			analogWrite(vent, 170);
+			estado_vent = true;
+			estado_calent = true;
+			estado_humi = false;
+		}
+		if (estado_temp == true && estado_hum == false){
+			digitalWrite(calent, estado_calent);
+			digitalWrite(humi, estado_humi);
+			analogWrite(vent, 68);
+			estado_vent = true;
+			estado_calent = false;
+			estado_humi = true;
+		}
+		if (estado_temp == true && estado_hum == true){
+			digitalWrite(calent, estado_calent);
+			digitalWrite(humi, estado_humi);
+			ejecutarIncremento = false;
+			ejecutarDecremento = true;
+			decrementarVel();
+			estado_vent = false;
+			estado_calent = false;
+			estado_humi = false;
+		}
+	}
 }
 
