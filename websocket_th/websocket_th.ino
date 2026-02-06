@@ -43,12 +43,12 @@ bool estado_humi = 0;
 //configurando la conexion a wifi
 //const char* ssid = "kevito_sam";
 //const char* password = "12345kev";
-const char* ssid = "vw-03826";
-const char* password = "ZTERRTHJ8902852";
+//const char* ssid = "vw-03826";
+//const char* password = "ZTERRTHJ8902852";
 //const char* ssid = "BARATRONICS";
 //const char* password = "inicio2021";
-//const char* ssid = "DaniJenny";
-//const char* password = "DaxJe022";
+const char* ssid = "DaniJenny";
+const char* password = "DaxJe022";
 //const char* ssid = "FLIA_CRUZ_2.4G";
 //const char* password = "14378556";
 //const char* ssid = "IEM-MONITOREO";
@@ -56,7 +56,7 @@ const char* password = "ZTERRTHJ8902852";
 
 //configuracion para la direccion del servidor websocket
 //const char* ws_host = "10.245.59.12";
-const char* ws_host = "192.168.1.229";
+const char* ws_host = "192.168.1.149";
 const int ws_port = 8080;
 
 //creando al objeto websocket que guarda la conexion entre el servidor WebSocket
