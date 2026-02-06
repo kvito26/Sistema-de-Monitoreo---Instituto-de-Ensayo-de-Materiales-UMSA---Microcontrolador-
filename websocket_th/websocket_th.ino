@@ -9,27 +9,54 @@
 #define DHTPIN 32
 
 DHT dht(DHTPIN, DHTTYPE, 32);
-int led = 22; //ventilador
-int led2 = 4; //calentador
-int led3 = 2; //humidificador
+const int vent = 22; //ventilador
+const int vent_relay = 18;
+const int calent = 4; //calentador
+const int humi = 2; //humidificador
+//const int nivel_agua = 34; //sensor de nivel de agua
+//luces piloto para indicadores/debug
+const int piloto_wifi = 25;
+const int piloto_server = 26;
+//const int piloto_vent = 27;
+//const int piloto_calent = 14;
+//const int piloto_humi = 12;
+/*INSTRUCCIONES PILOTO
+	* Para el piloto_wifi:
+		* Parpadeante cuando esta intentando conectarse a red wifi
+		* Encedido constante cuando se ha logrado conectar
+		* Sa apaga cuando no se conecta y si se ha desconectado
+	* Para el piloto_server:
+		* Parpadeante cuando se esta intentando conectar con el servidor
+		* Encendido constante cuando ya esta conectado, parpadeo inverso al enviar datos.
+		* Parpadeo cuando ha perdido la conexion y se esta intentado conectar
+	* Para el piloto_vent:
+		* El mismo comportamiento del pwm del pin vent.
+	* Para los pilotos calent y humi:
+		* El mismo comportamiento de los pines digitales calent y humi
+*/
+
 //estados de los pines
-bool estado_led = 0;
-bool estado_led2 = 0;
-bool estado_led3 = 0;
+bool estado_vent = 0;
+bool estado_calent = 0;
+bool estado_humi = 0;
 
 //configurando la conexion a wifi
 //const char* ssid = "kevito_sam";
 //const char* password = "12345kev";
-const char* ssid = "vw-03826";
-const char* password = "ZTERRTHJ8902852";
+//const char* ssid = "vw-03826";
+//const char* password = "ZTERRTHJ8902852";
 //const char* ssid = "BARATRONICS";
 //const char* password = "inicio2021";
 //const char* ssid = "DaniJenny";
 //const char* password = "DaxJe022";
+//const char* ssid = "FLIA_CRUZ_2.4G";
+//const char* password = "14378556";
+const char* ssid = "IEM-MONITOREO";
+const char* password = "iem-umsa-2026";
 
 //configuracion para la direccion del servidor websocket
 //const char* ws_host = "10.245.59.12";
-const char* ws_host = "192.168.1.229";
+const char* ws_host = "192.168.10.1";
 const int ws_port = 8080;
 
 //creando al objeto websocket que guarda la conexion entre el servidor WebSocket
@@ -44,7 +71,9 @@ const String DEVICE_ID = "esp_amb1";
 
 
 //prototipo de funciones generales
+void conectar_wifi();
 void webSocketEvent(WStype_t type, uint8_t * payload, size_t length);
+void pilotoServer(bool conexion_server);
 void envioDatosTH();
 void envioFeedbackVent(int nuevoEstado); 
 void envioFeedbackCalent(int nuevoEstado); 
@@ -79,10 +108,10 @@ void tareaEnvioFeedbacks(void *parameter){
 	for(;;){
 		if(conexion_server == true){
 			if (ejecutarIncremento != true || ejecutarDecremento != true){
-				//envioFeedbackVent(estado_led);
+				envioFeedbackVent(estado_vent);
 			}
-			//envioFeedbackCalent(estado_led2);
-			//envioFeedbackHumi(estado_led3);
+			envioFeedbackCalent(estado_calent);
+			envioFeedbackHumi(estado_humi);
 		}
 		vTaskDelay(500 / portTICK_PERIOD_MS);
 	}
@@ -92,11 +121,11 @@ void tareaEnvioFeedbacks(void *parameter){
 void tareaVelocidadPWM(void *parameter){
 	for(;;){
 		if(conexion_server == true){
-			if (estado_led == 1 && ejecutarIncremento == true){
+			if (estado_vent == 1 && ejecutarIncremento == true){
 				incrementarVel();
 				ejecutarIncremento = false;
 			}
-			if (estado_led == 0 && ejecutarDecremento == true){
+			if (estado_vent == 0 && ejecutarDecremento == true){
 				decrementarVel();
 				ejecutarDecremento = false;
 			}
@@ -105,31 +134,48 @@ void tareaVelocidadPWM(void *parameter){
 	}
 }
 
+//void tareaPilotoServer(void *parameter){
+//	for(;;){
+//		if (conexion_server == false){
+//			digitalWrite(piloto_server, LOW);
+//		}
+//		else {
+//			digitalWrite(piloto_server, HIGH);
+//		}
+//	}
+//	vTaskDelay(10 / portTICK_PERIOD_MS);
+//}
+
 //******************************************************
 void setup() {
 	Serial.begin(115200);
 	dht.begin();
 
 	//el modo de los pines
-	pinMode(led, OUTPUT);
-//	digitalWrite(led, estado_led);
-	pinMode(led2, OUTPUT);
-	digitalWrite(led2, estado_led2);
-	pinMode(led3, OUTPUT);
-	digitalWrite(led3, estado_led3);
+	pinMode(vent, OUTPUT);
+	pinMode(vent_relay, OUTPUT);
+	pinMode(calent, OUTPUT);
+	pinMode(humi, OUTPUT);
+	analogWrite(vent, 0);
+	digitalWrite(vent_relay, LOW);
+	digitalWrite(calent, estado_calent);
+	digitalWrite(humi, estado_humi);
+	 
+	//el modo de los pines piloto
+	pinMode(piloto_wifi, OUTPUT);
+	pinMode(piloto_server, OUTPUT);
+	//pinMode(piloto_vent, OUTPUT);
+	//pinMode(piloto_calent, OUTPUT);
+	//pinMode(piloto_humi, OUTPUT);
+	digitalWrite(piloto_server, conexion_server);
 
-	//conectando a wifi
-	WiFi.begin(ssid, password);
-	while (WiFi.status() != WL_CONNECTED){
-		delay(500);
-		Serial.print(".");
-	}
-	Serial.println("\nSe ha conectado a la red WiFi");
+	//realizando la conexion wifi
+	conectar_wifi();
 
 	//configurando el websocket cliente
 	webSocket.begin(ws_host, ws_port, "/");
 	webSocket.onEvent(webSocketEvent); //llamando a la funcion
-	webSocket.setReconnectInterval(5000);
+	webSocket.setReconnectInterval(3000);
 
 	
 	//******************************************************
@@ -175,13 +221,61 @@ void setup() {
 		1
 	);
 
+//	xTaskCreatePinnedToCore(
+//		tareaPilotoServer,
+//		"PilotoServerTask",
+//		1024,
+//		NULL,
+//		1, //prioridad de tarea
+//		NULL,
+//		0 //nucleo del procesador
+//	);
+
 	Serial.println("Se han creado las tareas para FreeRTOS");
+
+	envioFeedbackVent(estado_vent);
+	envioFeedbackCalent(estado_calent);
+	envioFeedbackHumi(estado_humi);
 }
 
 
+//*******************************************************
 void loop() {
 	//haciendo que el loop no trabaje a maxima frecuencia
 	vTaskDelay(1000 / portTICK_PERIOD_MS);
+}
+
+//*******************************************************
+//funcion para realizar la conexion a la red wifi
+void conectar_wifi(){
+	Serial.print("Conectando a la red: ");
+	Serial.println(ssid);
+
+	//conectando a wifi
+	WiFi.begin(ssid, password);
+	int contador_wifi = 0;
+
+	while (WiFi.status() != WL_CONNECTED){
+		if (contador_wifi > 300){
+			digitalWrite(piloto_wifi, LOW);
+			Serial.println("Error en la conexion WiFi");
+			break;
+		}
+		digitalWrite(piloto_wifi, HIGH);
+		delay(300);
+		Serial.print(".");
+		digitalWrite(piloto_wifi, LOW);
+		delay(300);
+		Serial.print(".");
+		contador_wifi++;
+	}
+
+	if (WiFi.status() == WL_CONNECTED){
+		Serial.println("\nSe ha conectado a la red WiFi");
+		Serial.print("IP: ");
+		Serial.println(WiFi.localIP());
+		digitalWrite(piloto_wifi, HIGH);
+	}
 }
 
 //funcion para la gestion de eventos del websocket
@@ -190,6 +284,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length){
 		case WStype_DISCONNECTED:
 			Serial.println("[WS] Desconectado del servidor");
 			conexion_server = false;
+			digitalWrite(piloto_server, LOW);
 			break;
 
 		case WStype_CONNECTED:
@@ -198,6 +293,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length){
 			//aqui la funcion que envia la llave
 			envioAutenticacion();
 			conexion_server = true;
+			digitalWrite(piloto_server, HIGH);
 			break;
 
 		case WStype_TEXT:
@@ -213,49 +309,56 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length){
 				return;
 			}
 			
-			bool valor = 0;
+			int valor = 0;
 			//verificando lo que nos interesa en el JSON
 			if (mensaje_rec["tipo"] == "ordenVent"){
 				valor = (bool) mensaje_rec["valor"];
 				//Serial.print("Este es el valor: ");
 				//Serial.println(valor);
-				//digitalWrite(led, valor);
+				//digitalWrite(vent, valor);
 				if (valor == 1){
-					estado_led = valor;
+					estado_vent = valor;
 					ejecutarIncremento = true;
 					ejecutarDecremento = false;
 				}
 				else if (valor == 0){
-					estado_led = valor;
+					estado_vent = valor;
 					ejecutarIncremento = false;
 					ejecutarDecremento = true;
 				}
+				envioFeedbackVent(estado_vent);
 			}
 			else if (mensaje_rec["tipo"] == "ordenCalent"){
 				valor = (bool) mensaje_rec["valor"];
 				//Serial.print("Este es el valor: ");
 				//Serial.println(valor);
-				digitalWrite(led2, valor);
+				digitalWrite(calent, valor);
 				envioFeedbackCalent(valor);
-				estado_led2 = valor;
+				estado_calent = valor;
 			}
 			else if (mensaje_rec["tipo"] == "ordenHumi"){
 				valor = (bool) mensaje_rec["valor"];
 				//Serial.print("Este es el valor: ");
 				//Serial.println(valor);
-				digitalWrite(led3, valor);
+				digitalWrite(humi, valor);
 				envioFeedbackHumi(valor);
-				estado_led3 = valor;
+				estado_humi = valor;
+			}
+			else if (mensaje_rec["tipo"] == "ordenVent_Var"){
+				valor = (int) mensaje_rec["valor"];
+				if (estado_vent == 1){
+					analogWrite(vent, valor);
+				}
 			}
 			break;
-
+		
 	}
 }
 
 //funcion de autenticacion
 void envioAutenticacion(){
 	JsonDocument auth;
-	auth["action"] = "autenticacion";
+	auth["action"] = "autenticar";
 	auth["id_disp"] = DEVICE_ID;
 
 	String mensaje;
@@ -322,20 +425,23 @@ void envioDatosTH(){
 
 //funcion para incrementar pwm para el ventilador
 void incrementarVel(){
-	for(int dutyCycle = 0; dutyCycle <= 255; dutyCycle++){   
+	digitalWrite(vent_relay, HIGH);
+	vTaskDelay(50 / portTICK_PERIOD_MS);
+	for(int dutyCycle = 0; dutyCycle <= 150; dutyCycle++){   
 		// changing the LED brightness with PWM
-		analogWrite(led, dutyCycle);
+		analogWrite(vent, dutyCycle);
 		vTaskDelay(15 / portTICK_PERIOD_MS);
 	}
 }
 
 //funcion para decrementar la velocidad del ventilador
 void decrementarVel(){
-	for(int dutyCycle = 255; dutyCycle >= 70; dutyCycle--){
+	for(int dutyCycle = 150; dutyCycle >= 0; dutyCycle--){
 		// changing the LED brightness with PWM
-		analogWrite(led, dutyCycle);
+		analogWrite(vent, dutyCycle);
 		vTaskDelay(10 / portTICK_PERIOD_MS);
 	}
+	vTaskDelay(50 / portTICK_PERIOD_MS);
+	digitalWrite(vent_relay, LOW);
 }
-
 

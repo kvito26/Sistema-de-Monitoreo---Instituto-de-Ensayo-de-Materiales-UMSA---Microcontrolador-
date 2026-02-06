@@ -1,6 +1,6 @@
 board            := "esp32:esp32:esp32"
 monitor_speed    := "115200"
-upload_speed     := "115200"
+upload_speed     := "921600"
 flash_size       := "4M"
 cpu_freq         := "240"
 partition_scheme := "default"
