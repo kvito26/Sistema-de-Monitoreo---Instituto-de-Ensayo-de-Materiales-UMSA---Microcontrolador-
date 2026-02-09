@@ -8,10 +8,10 @@
 const String DEVICE_ID = "esp_amb1";
 
 //CONEXION A LA RED WIFI ESPECIFICA
-const char* ssid = "FLIA_CRUZ_2.4G";
-const char* password = "14378556";
-//const char* ssid = "vw-03826";
-//const char* password = "ZTERRTHJ8902852";
+//const char* ssid = "FLIA_CRUZ_2.4G";
+//const char* password = "14378556";
+const char* ssid = "vw-03826";
+const char* password = "ZTERRTHJ8902852";
 //const char* ssid = "IEM-MONITOREO";
 //const char* password = "iem-umsa-2026";
 //const char* ssid = "DaniJenny";
@@ -31,7 +31,7 @@ const int resolucion = 8; // bits: 8
 
 //PINES DE LOS ACTUADORES
 //ORDEN: calentador[0], humidificador[1], ventRelay[2]
-const int pinesActuadores[3] = {4, 2, 12}; 
+const int pinesActuadores[3] = {4, 2, 18}; 
 
 //pines para las luces piloto
 const int piloto_server = 26;
@@ -40,7 +40,7 @@ const int piloto_wifi = 25;
 
 //================================================
 //configuracion para la conexion con el servidor websocket
-const char* ws_host = "192.168.1.8";
+const char* ws_host = "192.168.1.229";
 const int ws_port = 8080;
 
 //creando al objeto websocket que mantiene la conexion con el servidor
@@ -435,7 +435,7 @@ void controlAutomatico(bool estadoTH[], int n){
 			digitalWrite(pinesActuadores[i], estadoActuadores[i]);
 		}
 		toggleVent(2, true);
-		intensidadVent(2, 180);
+		intensidadVent(2, 150);
 	}	
 	if (estadoTH[0] == false && estadoTH[1] == true){
 		estadoActuadores[0] = true;
@@ -445,6 +445,7 @@ void controlAutomatico(bool estadoTH[], int n){
 			digitalWrite(pinesActuadores[i], estadoActuadores[i]);
 		}
 		toggleVent(2, true);
+		intensidadVent(2, 150);
 	}	
 	if (estadoTH[0] == true && estadoTH[1] == false){
 		estadoActuadores[0] = false;
@@ -453,7 +454,8 @@ void controlAutomatico(bool estadoTH[], int n){
 		for (int i = 0; i < 2; i++){
 			digitalWrite(pinesActuadores[i], estadoActuadores[i]);
 		}
-		intensidadVent(2, 130);
+		toggleVent(2, true);
+		intensidadVent(2, 114);
 	}	
 	if (estadoTH[0] == true && estadoTH[1] == true){
 		detenerTodo();
