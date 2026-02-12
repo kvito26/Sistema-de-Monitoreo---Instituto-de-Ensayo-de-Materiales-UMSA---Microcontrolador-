@@ -10,10 +10,10 @@ const String DEVICE_ID = "esp_amb1";
 //CONEXION A LA RED WIFI ESPECIFICA
 //const char* ssid = "FLIA_CRUZ_2.4G";
 //const char* password = "14378556";
-const char* ssid = "vw-03826";
-const char* password = "ZTERRTHJ8902852";
-//const char* ssid = "IEM-MONITOREO";
-//const char* password = "iem-umsa-2026";
+//const char* ssid = "vw-03826";
+//const char* password = "ZTERRTHJ8902852";
+const char* ssid = "IEM-MONITOREO";
+const char* password = "iem-umsa-2026";
 //const char* ssid = "DaniJenny";
 //const char* password = "DaxJe022";
 
@@ -32,6 +32,8 @@ const int resolucion = 8; // bits: 8
 //PINES DE LOS ACTUADORES
 //ORDEN: calentador[0], humidificador[1], ventRelay[2]
 const int pinesActuadores[3] = {4, 2, 18}; 
+//pines de entrada para los sensores
+const int pinesSensores[1] = {34}; //pines digitales
 
 //pines para las luces piloto
 const int piloto_server = 26;
@@ -40,7 +42,7 @@ const int piloto_wifi = 25;
 
 //================================================
 //configuracion para la conexion con el servidor websocket
-const char* ws_host = "192.168.1.229";
+const char* ws_host = "192.168.10.6";
 const int ws_port = 8080;
 
 //creando al objeto websocket que mantiene la conexion con el servidor
@@ -49,16 +51,22 @@ WebSocketsClient webSocket;
 //================================================
 //declaracion de varialbles control
 bool conexion_server = false;
-bool estadoActuadores[3] = {false};
+bool estadoActuadores[3] = {false}; //calent[0], humi[1], vent[2]
+bool estadoSensoresIn[1] = {false}; //nivelAgua[0]
 bool estadoTH[2] = {false}; //temp[0], hum[1]
 //tolerancias globales modo automatico: tolTemp[0], tolHum[1]
 float tolAuto[2] = {0.55f, 1.5f}; 
 
+//para los actuadores
 //se hace esto para guardar en la memoria ram y evitar que se lea constantement la memoria flash
 const char feedbackCalent[] = "feedbackCalent";
 const char feedbackHumi[] = "feedbackHumi";
 const char feedbackVent[] = "feedbackVent";
-const char* feedbacksToServer[3] = {feedbackCalent, feedbackHumi, feedbackVent};
+const char* feedbacksToServer[3] = {feedbackCalent, feedbackHumi, feedbackVent}; 
+
+//feed para los sensores digitales
+const char feedbackNivel[] = "feedbackNivel";
+const char* feedbacksInToServer[1] = {feedbackNivel};
 
 //variables de manejo de datos
 float lecturasTH[2] = {0.0f, 0.0f};
@@ -121,11 +129,18 @@ void tareaPilotoServer(void *parameter){
 void tareaEnvioFeedbacks(void *parameter){
 	for(;;){
 		if (conexion_server == true){
+			//leer el nivel de agua
+			estadoSensoresIn[0] = (bool) digitalRead(pinesSensores[0]);
+			for (int i = 0; i < 1; i++){
+				envioFeedbacks(feedbacksInToServer[i], estadoSensoresIn[i]);
+			}
+
+			//el estado para todos los pines de salida
 			for (int i = 0; i < 3; i++){
 				envioFeedbacks(feedbacksToServer[i], estadoActuadores[i]);
 			}	
 		}
-		vTaskDelay(500 / portTICK_PERIOD_MS);
+		vTaskDelay(450 / portTICK_PERIOD_MS);
 	}
 }
 
@@ -156,6 +171,11 @@ void setup() {
 	for (int i = 0; i < 3; i++){
 		pinMode(pinesActuadores[i], OUTPUT);
 	}
+	//configurando los pines de entrada
+	for (int i = 0; i < 1; i++){
+		pinMode(pinesSensores[i], INPUT_PULLDOWN);
+	}
+
 	pinMode(piloto_wifi, OUTPUT);
 	pinMode(piloto_server, OUTPUT);
 
@@ -163,6 +183,7 @@ void setup() {
 	for (int i = 0; i < 3; i++){
 		digitalWrite(pinesActuadores[i], estadoActuadores[i]);
 	}
+
 	digitalWrite(piloto_wifi, LOW);
 	digitalWrite(piloto_server, LOW);
 
@@ -274,6 +295,8 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length){
 			conexion_server = false;
 			vTaskResume(PilotoServerHandle);
 			vTaskSuspend(EnvioFeedbacksHandle);
+			vTaskSuspend(ControlAutomaticoHandle);
+			detenerTodo();
 			Serial.println("[WS] Desconectado del Servidor IEM");
 			break;
 		
