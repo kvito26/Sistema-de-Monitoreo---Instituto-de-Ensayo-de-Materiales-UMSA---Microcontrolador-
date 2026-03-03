@@ -5,7 +5,7 @@
 #include <DHT.h>
 
 //IDENTIFICADOR UNICO DEL DISPOSITIVO
-const String DEVICE_ID = "esp_amb1";
+const String DEVICE_ID = "esp_amb2";
 
 //CONEXION A LA RED WIFI ESPECIFICA
 //const char* ssid = "FLIA_CRUZ_2.4G";
@@ -16,6 +16,8 @@ const char* ssid = "IEM-MONITOREO";
 const char* password = "iem-umsa-2026";
 //const char* ssid = "DaniJenny";
 //const char* password = "DaxJe022";
+//const char* ssid = "kevito_sam";
+//const char* password = "12345kev";
 
 //================================================
 //pines para el sensor de temperatura DHT22
@@ -42,7 +44,8 @@ const int piloto_wifi = 25;
 
 //================================================
 //configuracion para la conexion con el servidor websocket
-const char* ws_host = "192.168.10.6";
+const char* ws_host = "192.168.10.3";
+//const char* ws_host = "10.210.74.12";
 const int ws_port = 8080;
 
 //creando al objeto websocket que mantiene la conexion con el servidor
@@ -131,6 +134,12 @@ void tareaEnvioFeedbacks(void *parameter){
 		if (conexion_server == true){
 			//leer el nivel de agua
 			estadoSensoresIn[0] = (bool) digitalRead(pinesSensores[0]);
+			//apagando el humificador si el tanque esta vacio
+			if (estadoSensoresIn[0] == false){
+				estadoActuadores[1] = false;
+				digitalWrite(pinesActuadores[1], estadoActuadores[1]);
+			}
+
 			for (int i = 0; i < 1; i++){
 				envioFeedbacks(feedbacksInToServer[i], estadoSensoresIn[i]);
 			}
@@ -201,7 +210,7 @@ void setup() {
 	xTaskCreatePinnedToCore(
 		tareaWebSocket,
 		"WebSocketTask",
-		10240, //memoria para la pila
+		32768, //memoria para la pila
 		NULL, 
 		3, //prioridad de la tarea
 		&WebSocketHandle,
@@ -212,7 +221,7 @@ void setup() {
 	xTaskCreatePinnedToCore(
 		tareaEnvioDatosTH,
 		"EnvioDatosTHTask",
-		4096, //memoria de la pila
+		5120, //memoria de la pila
 		NULL,
 		2, //prioridad de la tarea
 		&EnvioDatosTHHandle,
@@ -234,7 +243,7 @@ void setup() {
 	xTaskCreatePinnedToCore(
 		tareaEnvioFeedbacks,
 		"EnvioFeedbacksTask",
-		4096, //memoria de la pila
+		10240, //memoria de la pila
 		NULL,
 		2, //prioridad de la tarea
 		&EnvioFeedbacksHandle,
@@ -245,7 +254,7 @@ void setup() {
 	xTaskCreatePinnedToCore(
 		tareaControlAutomatico,
 		"ControlAutomaticoTask",
-		8192, //memoria de la pila
+		10240, //memoria de la pila
 		NULL,
 		2, //prioridad de la tarea
 		&ControlAutomaticoHandle,
@@ -329,7 +338,14 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length){
 				controlActuadores(pinesActuadores[0], 0, mensaje_rec["valor"]);
 			}
 			else if (mensaje_rec["tipo"] == "ordenHumi"){
-				controlActuadores(pinesActuadores[1], 1, mensaje_rec["valor"]);
+				//agregando interlock de seguridad (leyendo el estado del nivel de agua)
+				if (estadoSensoresIn[0] == true){
+					controlActuadores(pinesActuadores[1], 1, mensaje_rec["valor"]);
+				}
+				else{
+					//si el tanque no esta lleno enviando la respuesta de que el humi esta desactivado
+					estadoActuadores[1] = false;		
+				}
 			}
 			else if (mensaje_rec["tipo"] == "ordenVent"){
 				toggleVent(2, mensaje_rec["valor"]);
@@ -440,25 +456,44 @@ void intensidadVent(int indice_estado, int valor){
 //***********************************************
 //para el encendido 
 void activarAutomatico(){
+	//activando el calentador
 	estadoActuadores[0] = true;
 	digitalWrite(pinesActuadores[0], estadoActuadores[0]);
 	vTaskDelay(10000 / portTICK_PERIOD_MS);
 
+	//esperar 10s y activar el ventilador
 	toggleVent(2, true);
 
-	estadoActuadores[1] = true;
-	digitalWrite(pinesActuadores[1], estadoActuadores[1]);
+	//activar el humidificador (con interlock de seguridad)
+	if (estadoSensoresIn[0] == true){
+		estadoActuadores[1] = true;
+		digitalWrite(pinesActuadores[1], estadoActuadores[1]);
+	}
+	else {
+		estadoActuadores[1] = false;
+	}
 }
 
 //CONTROL AUTOMATICO
 void controlAutomatico(bool estadoTH[], int n){
 	if (estadoTH[0] == false && estadoTH[1] == false){
-		for (int i = 0; i < 2; i++){
-			estadoActuadores[i] = true;
-			digitalWrite(pinesActuadores[i], estadoActuadores[i]);
+		//verificando el nivel de agua (interlock), entonces todo activado
+		if (estadoSensoresIn[0] == true){
+			for (int i = 0; i < 2; i++){
+				estadoActuadores[i] = true;
+				digitalWrite(pinesActuadores[i], estadoActuadores[i]);
+			}
+		}
+		else {
+			estadoActuadores[0] = true;
+			estadoActuadores[1] = false;
+			digitalWrite(pinesActuadores[0], estadoActuadores[0]);
+			for (int i = 0; i < 2; i++){
+				digitalWrite(pinesActuadores[i], estadoActuadores[i]);
+			}
 		}
 		toggleVent(2, true);
-		intensidadVent(2, 150);
+		intensidadVent(2, 145);
 	}	
 	if (estadoTH[0] == false && estadoTH[1] == true){
 		estadoActuadores[0] = true;
@@ -468,17 +503,23 @@ void controlAutomatico(bool estadoTH[], int n){
 			digitalWrite(pinesActuadores[i], estadoActuadores[i]);
 		}
 		toggleVent(2, true);
-		intensidadVent(2, 150);
+		intensidadVent(2, 145);
 	}	
 	if (estadoTH[0] == true && estadoTH[1] == false){
-		estadoActuadores[0] = false;
-		estadoActuadores[1] = true;
-		digitalWrite(pinesActuadores[1], estadoActuadores[1]);
-		for (int i = 0; i < 2; i++){
-			digitalWrite(pinesActuadores[i], estadoActuadores[i]);
+		//interlock de seguridad para el nivel del agua
+		if (estadoSensoresIn[0] == true){
+			estadoActuadores[0] = false;
+			estadoActuadores[1] = true;
+			digitalWrite(pinesActuadores[1], estadoActuadores[1]);
+			for (int i = 0; i < 2; i++){
+				digitalWrite(pinesActuadores[i], estadoActuadores[i]);
+			}
+			toggleVent(2, false);
+		//	intensidadVent(2, 114);
 		}
-		toggleVent(2, true);
-		intensidadVent(2, 114);
+		else {
+			detenerTodo();
+		}
 	}	
 	if (estadoTH[0] == true && estadoTH[1] == true){
 		detenerTodo();
