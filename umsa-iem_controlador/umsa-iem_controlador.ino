@@ -52,14 +52,6 @@ const int ws_port = 8080;
 WebSocketsClient webSocket;
 
 //================================================
-//declaracion de varialbles control
-bool conexion_server = false;
-bool estadoActuadores[3] = {false}; //calent[0], humi[1], vent[2]
-bool estadoSensoresIn[1] = {false}; //nivelAgua[0]
-bool estadoTH[2] = {false}; //temp[0], hum[1]
-//tolerancias globales modo automatico: tolTemp[0], tolHum[1]
-float tolAuto[2] = {0.55f, 1.5f}; 
-
 //para los actuadores
 //se hace esto para guardar en la memoria ram y evitar que se lea constantement la memoria flash
 const char feedbackCalent[] = "feedbackCalent";
@@ -70,6 +62,14 @@ const char* feedbacksToServer[3] = {feedbackCalent, feedbackHumi, feedbackVent};
 //feed para los sensores digitales
 const char feedbackNivel[] = "feedbackNivel";
 const char* feedbacksInToServer[1] = {feedbackNivel};
+
+//declaracion de varialbles control
+bool conexion_server = false;
+bool estadoActuadores[3] = {false}; //calent[0], humi[1], vent[2]
+bool estadoSensoresIn[1] = {false}; //nivelAgua[0]
+bool estadoTH[4] = {false}; //tempMax[0], humMax[1], tempMin[2], humMin[3]
+//tolerancias globales modo automatico: tolTempMax[0], tolHumMax[1], tolTempMin[2], tolHumMin[3]
+float tolAuto[4] = {0.9f, 3.5f, -0.9f, -2.0f}; 
 
 //variables de manejo de datos
 float lecturasTH[2] = {0.0f, 0.0f};
@@ -94,6 +94,7 @@ TaskHandle_t EnvioDatosTHHandle = NULL;
 TaskHandle_t PilotoServerHandle = NULL;
 TaskHandle_t EnvioFeedbacksHandle = NULL;
 TaskHandle_t ControlAutomaticoHandle = NULL;
+//TaskHandle_t LeerNivelAguaHandle = NULL;
 
 //TAREAS freeRTOS
 //tarea 1: mantener la conexion con el servidor websocket
@@ -110,6 +111,12 @@ void tareaEnvioDatosTH(void *parameter){
 		if (conexion_server == true){
 			envioDatosTH();
 		}
+//		//imprimiendo estados de temperatura y humedad para debug
+//		for (int j = 0; j < 4; j++){
+//			Serial.printf("%d", estadoTH[j]);
+//		}
+//		Serial.printf("\n");
+
 		vTaskDelay(5000 / portTICK_PERIOD_MS);
 	}
 }
@@ -136,8 +143,10 @@ void tareaEnvioFeedbacks(void *parameter){
 			estadoSensoresIn[0] = (bool) digitalRead(pinesSensores[0]);
 			//apagando el humificador si el tanque esta vacio
 			if (estadoSensoresIn[0] == false){
-				estadoActuadores[1] = false;
-				digitalWrite(pinesActuadores[1], estadoActuadores[1]);
+				//estadoActuadores[1] = false;
+				//digitalWrite(pinesActuadores[1], estadoActuadores[1]);
+				vTaskSuspend(ControlAutomaticoHandle);
+				detenerTodo();
 			}
 
 			for (int i = 0; i < 1; i++){
@@ -158,16 +167,32 @@ void tareaControlAutomatico(void *parameter){
 	for(;;){
 		//verificando el estado de la temp y hum en las lecturas
 		for (int i = 0; i < 2; i++){
-			estadoTH[i] = (lecturasTH[i] >= (configTH[i] + tolAuto[i])) ? true : false;
+			estadoTH[i] = (lecturasTH[i] > (configTH[i] + tolAuto[i])) ? true : false;
 		}	
-
+		for (int i = 0, j = 2; j < 4; i++, j++){
+			estadoTH[j] = (lecturasTH[i] <= (configTH[i] + tolAuto[j])) ? true : false;
+		}	
+		
 		//pasando el array estadoTH a la funcion de control automatico
-		controlAutomatico(estadoTH, 2);
+		controlAutomatico(estadoTH, 4);
 
 		vTaskDelay(100 / portTICK_PERIOD_MS);
 	}
 }
 
+////tarea 6: revision del sensor de nivel de agua
+//void tareaLeerNivelAgua(void *parameter){
+//	for (;;){
+//		//apagando el humificador si el tanque esta vacio
+//		if (estadoSensoresIn[0] == false){
+//			vTaskDelay(90000 / portTICK_PERIOD_MS); //esperando por un minuto y medio para detener el humdificador
+//			estadoActuadores[1] = false;
+//			digitalWrite(pinesActuadores[1], estadoActuadores[1]);
+//		}
+//
+//		vTaskDelay(100 / portTICK_PERIOD_MS);
+//	}
+//}
 
 //=================================================
 void setup() {
@@ -182,7 +207,8 @@ void setup() {
 	}
 	//configurando los pines de entrada
 	for (int i = 0; i < 1; i++){
-		pinMode(pinesSensores[i], INPUT_PULLDOWN);
+	//	pinMode(pinesSensores[i], INPUT_PULLDOWN);
+		pinMode(pinesSensores[i], INPUT);
 	}
 
 	pinMode(piloto_wifi, OUTPUT);
@@ -260,6 +286,17 @@ void setup() {
 		&ControlAutomaticoHandle,
 		0 //nucleo de procesador
 	);
+
+//	//tarea 6: revision del sensor de nivel de agua
+//	xTaskCreatePinnedToCore(
+//		tareaLeerNivelAgua,
+//		"LeerNivelAguaTask",
+//		4096, //memoria de la pila
+//		NULL,
+//		2, //prioridad de la tarea
+//		&LeerNivelAguaHandle,
+//		1 //nucleo de procesador
+//	);
 
 	//suspender al inicio ya que no se esta usando el control automatico
 	vTaskSuspend(ControlAutomaticoHandle);
@@ -476,26 +513,19 @@ void activarAutomatico(){
 
 //CONTROL AUTOMATICO
 void controlAutomatico(bool estadoTH[], int n){
-	if (estadoTH[0] == false && estadoTH[1] == false){
+	//para este caso solo se activa el calentador
+	if (estadoTH[0] == false && estadoTH[1] == false && estadoTH[2] == true && estadoTH[3] == true){
 		//verificando el nivel de agua (interlock), entonces todo activado
-		if (estadoSensoresIn[0] == true){
-			for (int i = 0; i < 2; i++){
-				estadoActuadores[i] = true;
-				digitalWrite(pinesActuadores[i], estadoActuadores[i]);
-			}
-		}
-		else {
-			estadoActuadores[0] = true;
-			estadoActuadores[1] = false;
-			digitalWrite(pinesActuadores[0], estadoActuadores[0]);
-			for (int i = 0; i < 2; i++){
-				digitalWrite(pinesActuadores[i], estadoActuadores[i]);
-			}
+		estadoActuadores[0] = true;
+		estadoActuadores[1] = false;
+		digitalWrite(pinesActuadores[0], estadoActuadores[0]);
+		for (int i = 0; i < 2; i++){
+			digitalWrite(pinesActuadores[i], estadoActuadores[i]);
 		}
 		toggleVent(2, true);
-		intensidadVent(2, 145);
+		intensidadVent(2, 135);
 	}	
-	if (estadoTH[0] == false && estadoTH[1] == true){
+	if (estadoTH[0] == false && estadoTH[1] == true && estadoTH[2] == true && estadoTH[3] == false){
 		estadoActuadores[0] = true;
 		estadoActuadores[1] = false;
 		digitalWrite(pinesActuadores[1], estadoActuadores[1]);
@@ -503,9 +533,9 @@ void controlAutomatico(bool estadoTH[], int n){
 			digitalWrite(pinesActuadores[i], estadoActuadores[i]);
 		}
 		toggleVent(2, true);
-		intensidadVent(2, 145);
+		intensidadVent(2, 135);
 	}	
-	if (estadoTH[0] == true && estadoTH[1] == false){
+	if (estadoTH[0] == true && estadoTH[1] == false && estadoTH[2] == false && estadoTH[3] == true){
 		//interlock de seguridad para el nivel del agua
 		if (estadoSensoresIn[0] == true){
 			estadoActuadores[0] = false;
@@ -521,7 +551,7 @@ void controlAutomatico(bool estadoTH[], int n){
 			detenerTodo();
 		}
 	}	
-	if (estadoTH[0] == true && estadoTH[1] == true){
+	if (estadoTH[0] == true && estadoTH[1] == true && estadoTH[2] == false && estadoTH[3] == false){
 		detenerTodo();
 	}	
 }
