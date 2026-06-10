@@ -8,12 +8,12 @@
 const String DEVICE_ID = "esp_amb2";
 
 //CONEXION A LA RED WIFI ESPECIFICA
-//const char* ssid = "FLIA_CRUZ_2.4G";
-//const char* password = "14378556";
+const char* ssid = "FLIA_CRUZ_2.4G";
+const char* password = "14378556";
 //const char* ssid = "vw-03826";
 //const char* password = "ZTERRTHJ8902852";
-const char* ssid = "IEM-MONITOREO";
-const char* password = "iem-umsa-2026";
+//const char* ssid = "IEM-MONITOREO";
+//const char* password = "iem-umsa-2026";
 //const char* ssid = "DaniJenny";
 //const char* password = "DaxJe022";
 //const char* ssid = "kevito_sam";
@@ -44,7 +44,7 @@ const int piloto_wifi = 25;
 
 //================================================
 //configuracion para la conexion con el servidor websocket
-const char* ws_host = "192.168.10.3";
+const char* ws_host = "192.168.1.16";
 //const char* ws_host = "10.210.74.12";
 const int ws_port = 8080;
 
