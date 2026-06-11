@@ -1,0 +1,9 @@
+{
+  "additionalFiles": "",
+  "compiler.optimization_flags": "-Os",
+  "customBuildProperties": "",
+  "fqbn": "esp32:esp32:esp32:FlashSize=4M,PartitionScheme=default,CPUFreq=240",
+  "hardwareFolders": "/home/kevito/.arduino15/packages",
+  "otherLibrariesFolders": "/home/kevito/Arduino/libraries",
+  "sketchLocation": "/home/kevito/Arduino/umsa-iem_esp32/iem"
+}
